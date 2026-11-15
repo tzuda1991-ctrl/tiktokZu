@@ -698,7 +698,7 @@ class SettingsController extends Controller
         $reportReasons = ReportReasons::all();
         $deepARFilters = DeepARFilters::all();
         $coinPackages = CoinPackages::where('status', 1)->get();
-        $dummyLives = DummyLiveVideos::where('status', 1)->with(['user:'.Constants::userPublicFields])->get();
+        $dummyLives = DummyLiveVideos::where('status', 1)->whereNotNull('user_id')->has('user')->with(['user:'.Constants::userPublicFields])->get();
         $userLevels = UserLevels::all();
         $musicCategories = MusicCategories::where('is_deleted', 0)->withCount('musics')->get();
         $itemBaseUrl = GlobalFunction::getItemBaseUrl();

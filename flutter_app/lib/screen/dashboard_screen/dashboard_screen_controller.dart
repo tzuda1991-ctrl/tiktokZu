@@ -1,3 +1,4 @@
+import 'package:shortzz/screen/live_stream/live_stream_search_screen/live_stream_search_screen_controller.dart';
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -102,6 +103,9 @@ class DashboardScreenController extends BaseController with GetSingleTickerProvi
         SystemUiOverlayStyle(statusBarBrightness: index == 0 || index == 2 ? Brightness.dark : Brightness.light));
     if (index == 1) {
       onFeedPostScrollDown(index);
+    }
+    if (index == 2 && Get.isRegistered<LiveStreamSearchScreenController>()) {
+      Get.find<LiveStreamSearchScreenController>().refreshDummyLives();
     }
     if (selectedPageIndex.value == index) return;
     HapticFeedback.lightImpact();

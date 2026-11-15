@@ -1,3 +1,4 @@
+import 'package:shortzz/common/service/api/common_service.dart';
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -34,7 +35,52 @@ class LiveStreamSearchScreenController extends BaseController {
   @override
   void onReady() {
     super.onReady();
-    Future.wait({fetchLiveStreams(), addDummyUsers()});
+    refreshDummyLives();
+    fetchLiveStreams();
+  }
+
+  Future<void> refreshDummyLives() async {
+    await CommonService.instance.fetchGlobalSettings();
+    _injectLocalDummyLives();
+    await addDummyUsers();
+  }
+
+  void _injectLocalDummyLives() {
+    if (setting?.liveDummyShow == 0) return;
+    int time = DateTime.now().millisecondsSinceEpoch;
+    for (var dummy in dummyLives) {
+      final dummyUser = dummy.user;
+      final dummyId = dummy.userId;
+      if (dummyUser == null || dummyId == null || dummyId == -1 || dummy.status != 1) {
+        continue;
+      }
+      final appUser = dummyUser.appUser;
+      final existingUserIdx = firebaseFirestoreController.users
+          .indexWhere((u) => u.userId == dummyId);
+      if (existingUserIdx == -1) {
+        firebaseFirestoreController.users.add(appUser);
+      } else {
+        firebaseFirestoreController.users[existingUserIdx] = appUser;
+      }
+
+      final existsInStream =
+          livestreamList.any((s) => s.hostId == dummyId || s.roomID == '$dummyId');
+      if (!existsInStream) {
+        final stream = dummyUser.livestream(
+          type: LivestreamType.dummy,
+          time: time,
+          dummyUserLink: dummy.link,
+          isDummyLive: 1,
+          description: dummy.title,
+        );
+        stream.hostUser = appUser;
+        livestreamList.add(stream);
+      }
+    }
+    _assignHostUsersToStreams();
+    livestreamFilterList.value = List.from(livestreamList);
+    livestreamFilterList.sort((a, b) => (b.createdAt ?? 0).compareTo(a.createdAt ?? 0));
+    isLoading.value = false;
   }
 
   @override
@@ -146,7 +192,7 @@ class LiveStreamSearchScreenController extends BaseController {
         final dummyId = dummy.userId;
 
         // Skip invalid IDs
-        if (dummyId == -1) continue;
+        if (dummyId == null || dummyId == -1 || dummy.user == null) continue;
 
         final alreadyExists = existingIds.contains('$dummyId');
         if (!alreadyExists && dummy.status == 1) {

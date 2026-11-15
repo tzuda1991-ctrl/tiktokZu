@@ -172,17 +172,29 @@ class GlobalFunction extends Model
 
     public static function regenerateGoogleAPIToken()
     {
-        $client = new Client();
-        $client->setAuthConfig('googleCredentials.json');
-        $client->addScope('https://www.googleapis.com/auth/firebase.messaging');
-        $client->addScope('https://www.googleapis.com/auth/cloud-platform');
-        $client->fetchAccessTokenWithAssertion();
-        $accessToken = $client->getAccessToken();
-        $accessToken = $accessToken['access_token'];
-
-        $setting = GlobalSettings::first();
-        $setting->place_api_access_token = $accessToken;
-        $setting->save();
+        $googleCredentialsPath = base_path('googleCredentials.json');
+        if (!File::exists($googleCredentialsPath)) {
+            return;
+        }
+        $creds = json_decode(File::get($googleCredentialsPath), true);
+        if (empty($creds['private_key']) || empty($creds['client_email'])) {
+            return;
+        }
+        try {
+            $client = new Client();
+            $client->setAuthConfig($googleCredentialsPath);
+            $client->addScope('https://www.googleapis.com/auth/firebase.messaging');
+            $client->addScope('https://www.googleapis.com/auth/cloud-platform');
+            $client->fetchAccessTokenWithAssertion();
+            $accessToken = $client->getAccessToken();
+            if (!empty($accessToken['access_token'])) {
+                $setting = GlobalSettings::first();
+                $setting->place_api_access_token = $accessToken['access_token'];
+                $setting->save();
+            }
+        } catch (\Throwable $e) {
+            Log::warning('FCM token regeneration skipped: ' . $e->getMessage());
+        }
     }
 
     public static function insertUserNotification($type, $fromUserId, $toUserId, $dataId)
@@ -251,7 +263,13 @@ class GlobalFunction extends Model
     {
         // Load Google credentials and fetch the access token
         $googleCredentialsPath = base_path('googleCredentials.json');
+        if (!File::exists($googleCredentialsPath)) {
+            return false;
+        }
         $googleCredentials = json_decode(File::get($googleCredentialsPath), true);
+        if (empty($googleCredentials['project_id']) || empty($googleCredentials['private_key'])) {
+            return false;
+        }
 
         $settings = GlobalSettings::first();
         $accessToken = $settings->place_api_access_token;
@@ -264,11 +282,9 @@ class GlobalFunction extends Model
             ->post($url, $payload);
 
         // Check if token is expired or not
-        // Log::debug('Notification Response:', [$response->body()]);
         $responseBody = json_decode($response->body(), true);
         if (isset($responseBody['error']['code'])) {
             $errorCode = $responseBody['error']['code'];
-            // Log::debug('iOS Notification Error Code:', $errorCode);
             if ($errorCode == 401) {
                 // Regenerate Token
                 GlobalFunction::regenerateGoogleAPIToken();
@@ -1040,29 +1056,31 @@ class GlobalFunction extends Model
 
     public static function getItemBaseUrl()
     {
-        $storageType = env('FILES_STORAGE_LOCATION');
+        $storageType = env('FILES_STORAGE_LOCATION', 'PUBLIC');
         switch ($storageType) {
             case 'AWSS3':
                 return env('AWS_ITEM_BASE_URL');
             case 'DOSPACE':
                 return env('DO_SPACE_URL');
             case 'PUBLIC':
-                return env('APP_URL') . 'public/storage/';
+            default:
+                return rtrim((string) config('app.url'), '/') . '/storage/';
         }
     }
     public static function generateFileUrl($filePath)
     {
         if ($filePath != null) {
-            $storageType = env('FILES_STORAGE_LOCATION');
+            $storageType = env('FILES_STORAGE_LOCATION', 'PUBLIC');
             switch ($storageType) {
                 case 'AWSS3':
                     return env('AWS_ITEM_BASE_URL') . $filePath;
                 case 'DOSPACE':
                     return env('DO_SPACE_URL') . $filePath;
                 case 'PUBLIC':
-                    return env('APP_URL') . 'public/storage/' . $filePath;
+                default:
+                    return rtrim((string) config('app.url'), '/') . '/storage/' . $filePath;
             }
-        }else{
+        } else {
             return null;
         }
     }

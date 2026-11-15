@@ -20,26 +20,15 @@ class DashboardController extends Controller
     //
     function dashboard()
     {
-        // Validate googleCredentials.json file
-        try {
-            $filePath = base_path('googleCredentials.json');
-            if (!File::exists($filePath)) {
-                return response()->json(['message' => 'The googleCredentials.json file does not exist.'], 404);
+        // Check googleCredentials.json status without blocking admin dashboard access
+        $filePath = base_path('googleCredentials.json');
+        $fcmConfigured = false;
+        if (File::exists($filePath)) {
+            $contents = trim(File::get($filePath));
+            if (!empty($contents)) {
+                $json = json_decode($contents, true);
+                $fcmConfigured = (json_last_error() === JSON_ERROR_NONE && !empty($json['private_key']));
             }
-
-            $contents = File::get($filePath);
-            if (empty(trim($contents))) {
-                return response()->view('google_credentials_empty');
-            }
-
-            // Validate JSON format
-            $json = json_decode($contents, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                return response()->json(['message' => 'The googleCredentials.json file contains invalid JSON.'], 400);
-            }
-
-        } catch (\Exception $e) {
-            return response()->json(['message' => 'An error occurred: ' . $e->getMessage()], 500);
         }
 
         $userTotal = Users::count();

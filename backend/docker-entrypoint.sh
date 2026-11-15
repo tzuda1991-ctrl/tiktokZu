@@ -16,18 +16,25 @@ sed -i "s/<VirtualHost \*:80>/<VirtualHost *:${PORT}>/g" /etc/apache2/sites-avai
 
 if [ -n "${GOOGLE_CREDENTIALS_JSON:-}" ]; then
   printf '%s' "${GOOGLE_CREDENTIALS_JSON}" > /var/www/html/googleCredentials.json
+elif [ ! -s /var/www/html/googleCredentials.json ]; then
+  printf '{"type":"service_account","project_id":"shortzz-new"}' > /var/www/html/googleCredentials.json
 fi
 
-mkdir -p /var/www/html/storage/app/public \
+mkdir -p /var/www/html/storage/app/public/uploads \
   /var/www/html/storage/framework/cache \
   /var/www/html/storage/framework/sessions \
   /var/www/html/storage/framework/views \
   /var/www/html/storage/logs \
   /var/www/html/bootstrap/cache
 
+# Extract bundled language CSVs into storage/app/public/uploads/
+if [ -f /var/www/html/app_languages.zip ]; then
+  unzip -oq /var/www/html/app_languages.zip -d /var/www/html/storage/app/public/uploads/ || true
+fi
+
 chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
 
-# Auto-import shortzz_database.sql once if MySQL is connected and tbl_settings does not exist yet
+# Auto-import shortzz_database.sql and ensure default languages exist
 if [ -f /var/www/html/database/shortzz_database.sql ]; then
   php -r '
     $url = getenv("DATABASE_URL") ?: getenv("MYSQL_URL");
@@ -46,7 +53,7 @@ if [ -f /var/www/html/database/shortzz_database.sql ]; then
         $pass = getenv("DB_PASSWORD") ?: getenv("MYSQLPASSWORD");
     }
     if (!$host || !$db || !$user) {
-        fwrite(STDERR, "[Shortzz] Skipping auto SQL import: DB credentials incomplete.\n");
+        fwrite(STDERR, "[Shortzz] Skipping auto SQL check: DB credentials incomplete.\n");
         exit(0);
     }
     for ($i = 0; $i < 10; $i++) {
@@ -56,24 +63,32 @@ if [ -f /var/www/html/database/shortzz_database.sql ]; then
                 PDO::ATTR_TIMEOUT => 5,
             ]);
             $exists = $pdo->query("SHOW TABLES LIKE \"tbl_settings\"")->fetchColumn();
-            if ($exists) {
-                fwrite(STDOUT, "[Shortzz] Database tables already present.\n");
-                exit(0);
+            if (!$exists) {
+                fwrite(STDOUT, "[Shortzz] Empty database detected. Importing database/shortzz_database.sql...\n");
+                $cmd = sprintf(
+                    "MYSQL_PWD=%s mysql --skip-ssl -h %s -P %s -u %s %s < /var/www/html/database/shortzz_database.sql",
+                    escapeshellarg($pass),
+                    escapeshellarg($host),
+                    escapeshellarg((string)$port),
+                    escapeshellarg($user),
+                    escapeshellarg($db)
+                );
+                passthru($cmd, $ret);
+                if ($ret !== 0) {
+                    fwrite(STDERR, "[Shortzz] Auto SQL import failed with exit code {$ret}.\n");
+                } else {
+                    fwrite(STDOUT, "[Shortzz] Database schema imported successfully!\n");
+                }
             }
-            fwrite(STDOUT, "[Shortzz] Empty database detected. Importing database/shortzz_database.sql...\n");
-            $cmd = sprintf(
-                "MYSQL_PWD=%s mysql --skip-ssl -h %s -P %s -u %s %s < /var/www/html/database/shortzz_database.sql",
-                escapeshellarg($pass),
-                escapeshellarg($host),
-                escapeshellarg((string)$port),
-                escapeshellarg($user),
-                escapeshellarg($db)
-            );
-            passthru($cmd, $ret);
-            if ($ret !== 0) {
-                fwrite(STDERR, "[Shortzz] Auto SQL import failed with exit code {$ret}.\n");
-            } else {
-                fwrite(STDOUT, "[Shortzz] Database schema imported successfully!\n");
+
+            // Ensure default languages exist in `languages` table so the Flutter app passes the splash screen
+            $langCount = (int) $pdo->query("SELECT COUNT(*) FROM `languages`")->fetchColumn();
+            if ($langCount === 0) {
+                fwrite(STDOUT, "[Shortzz] Seeding default languages (English & Hindi) into `languages` table...\n");
+                $stmt = $pdo->prepare("INSERT INTO `languages` (`code`, `title`, `localized_title`, `csv_file`, `status`, `is_default`) VALUES (?, ?, ?, ?, ?, ?)");
+                $stmt->execute(["en", "English", "English", "uploads/English.csv", 1, 1]);
+                $stmt->execute(["hi", "Hindi", "हिन्दी", "uploads/Hindi.csv", 1, 0]);
+                fwrite(STDOUT, "[Shortzz] Default languages seeded!\n");
             }
             exit(0);
         } catch (Throwable $e) {

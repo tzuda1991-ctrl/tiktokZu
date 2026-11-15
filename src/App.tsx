@@ -101,7 +101,7 @@ function generateApiKey(): string {
 export default function App() {
   const [activeTab, setActiveTab] = useState<SectionId>('overview');
   const [filterTarget, setFilterTarget] = useState<string>('All');
-  const [railwayDomain, setRailwayDomain] = useState<string>('https://tiktokzu-backend.up.railway.app');
+  const [railwayDomain, setRailwayDomain] = useState<string>('https://tiktokzu-production.up.railway.app');
   const [appKey, setAppKey] = useState<string>(() => generateLaravelKey());
   const [apiKey, setApiKey] = useState<string>(() => generateApiKey());
   const [storageMode, setStorageMode] = useState<'PUBLIC' | 'AWSS3' | 'DOSPACE'>('PUBLIC');

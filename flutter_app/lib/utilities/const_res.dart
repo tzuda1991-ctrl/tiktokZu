@@ -1,6 +1,6 @@
 const String baseURL = String.fromEnvironment(
   'BASE_URL',
-  defaultValue: 'https://YOUR-BACKEND.up.railway.app/',
+  defaultValue: 'https://tiktokzu-production.up.railway.app/',
 );
 const String apiURL = '${baseURL}api/';
 const String apiKey = String.fromEnvironment(

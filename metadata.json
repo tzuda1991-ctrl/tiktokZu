@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "Shortzz Deploy Hub",
+  "description": "Repository configuration and deployment helper for Shortzz on Railway and GitHub Actions.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

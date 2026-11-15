@@ -10,14 +10,12 @@ class CheckHeader
 {
     public function handle(Request $request, Closure $next)
     {
-        if (isset($_SERVER['HTTP_APIKEY'])) {
+        $apikey = $request->header('apikey') ?? ($_SERVER['HTTP_APIKEY'] ?? null);
 
-            $apikey = $_SERVER['HTTP_APIKEY'];
-
-            if ($apikey == 'retry123') {
+        if ($apikey !== null && $apikey !== '') {
+            if ($apikey === config('app.api_key', 'retry123')) {
                 return $next($request);
             } else {
-
                 $data['status']    = false;
                 $data['message']  = "Invalid API Key!";
                 return new JsonResponse($data, 401);

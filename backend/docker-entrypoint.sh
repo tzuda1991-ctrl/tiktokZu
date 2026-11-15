@@ -23,4 +23,7 @@ php artisan config:clear || true
 php artisan route:clear || true
 php artisan view:clear || true
 
+rm -f /etc/apache2/mods-enabled/mpm_event.* /etc/apache2/mods-enabled/mpm_worker.* || true
+a2enmod mpm_prefork >/dev/null 2>&1 || true
+
 exec apache2-foreground

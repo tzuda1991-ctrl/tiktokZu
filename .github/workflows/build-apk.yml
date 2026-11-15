@@ -23,6 +23,9 @@ on:
         required: false
         default: false
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     name: Build Android Release APK
@@ -120,9 +123,25 @@ jobs:
             flutter build apk --release $DART_DEFINES
           fi
 
+      - name: Rename APK to Shortzz-v2.1-Fixed.apk
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/Shortzz-v2.1-Fixed.apk
+
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: shortzz-release-apk
-          path: flutter_app/build/app/outputs/flutter-apk/*.apk
+          path: flutter_app/build/app/outputs/flutter-apk/Shortzz-v2.1-Fixed.apk
           retention-days: 30
+
+      - name: Publish Direct Download GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: v2.1.0
+          name: "Shortzz v2.1.0 (Google & Email Login Fixed)"
+          body: "Direct APK download with Google Sign-In & Email Login fixed. Please UNINSTALL any previous Shortzz app on your phone before installing Shortzz-v2.1-Fixed.apk."
+          files: flutter_app/build/app/outputs/flutter-apk/Shortzz-v2.1-Fixed.apk
+          overwrite: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

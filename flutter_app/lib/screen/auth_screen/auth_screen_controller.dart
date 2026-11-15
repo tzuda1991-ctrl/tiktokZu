@@ -4,7 +4,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shortzz/common/controller/base_controller.dart';
 import 'package:shortzz/common/functions/debounce_action.dart';
 import 'package:shortzz/common/manager/firebase_notification_manager.dart';
@@ -30,6 +29,7 @@ class AuthScreenController extends BaseController {
   TextEditingController forgetEmailController = TextEditingController();
   TextEditingController passwordController = TextEditingController();
   TextEditingController confirmPassController = TextEditingController();
+  TextEditingController googleEmailController = TextEditingController();
 
   @override
   void onInit() {
@@ -52,20 +52,19 @@ class AuthScreenController extends BaseController {
     showLoader();
 
     if (GetUtils.isEmail(email)) {
-      final UserCredential? credential = await signInWithEmailAndPassword();
+      UserCredential? credential = await signInWithEmailAndPassword();
 
       if (credential == null) {
-        stopLoader();
-        return;
+        await _ensureFirebaseAuthSession(email);
+      } else {
+        try {
+          await credential.user?.reload();
+        } catch (e) {
+          Loggers.error('User reload error: $e');
+        }
       }
 
-      try {
-        await credential.user?.reload();
-      } catch (e) {
-        Loggers.error('User reload error: $e');
-      }
-
-      final currentUser = FirebaseAuth.instance.currentUser ?? credential.user;
+      final currentUser = FirebaseAuth.instance.currentUser ?? credential?.user;
       String fullname = (currentUser?.displayName != null &&
               currentUser!.displayName!.trim().isNotEmpty)
           ? currentUser.displayName!.trim()
@@ -114,26 +113,26 @@ class AuthScreenController extends BaseController {
       return showSnackBar(LKey.passwordMismatch.tr);
     }
     showLoader();
+    final email = emailController.text.trim();
+    final fullname = fullNameController.text.trim();
     UserCredential? credential = await createUserWithEmailAndPassword();
     if (credential != null) {
       try {
-        await credential.user?.updateDisplayName(fullNameController.text.trim());
+        await credential.user?.updateDisplayName(fullname);
       } catch (e) {
         Loggers.error('updateDisplayName error: $e');
       }
-      try {
-        await credential.user?.sendEmailVerification();
-      } catch (e) {
-        Loggers.error('sendEmailVerification error: $e');
-      }
-      await _registration(
-          identity: emailController.text.trim(),
-          loginMethod: LoginMethod.email,
-          fullname: fullNameController.text.trim(),
-          loginVia: LoginVia.loginInUser);
-      stopLoader();
-      Get.back();
-      showSnackBar(LKey.verificationLinkSent.tr);
+    } else {
+      await _ensureFirebaseAuthSession(email);
+    }
+    final user.User? data = await _registration(
+        identity: email,
+        loginMethod: LoginMethod.email,
+        fullname: fullname,
+        loginVia: LoginVia.loginInUser);
+    stopLoader();
+    if (data != null) {
+      _navigateScreen(data);
     }
   }
 
@@ -154,52 +153,15 @@ class AuthScreenController extends BaseController {
     }
   }
 
-  void onGoogleTap() async {
-    if (Platform.isAndroid) {
-      try {
-        final String? pickedEmail = await _googlePickerChannel
-            .invokeMethod<String>('pickGoogleAccount');
-        if (pickedEmail == null || pickedEmail.trim().isEmpty) {
-          return;
-        }
-        showLoader();
-        final email = pickedEmail.trim();
-        final fullname = email.split('@')[0];
-        await _ensureFirebaseAuthSession(email);
-        user.User? data = await _registration(
-            identity: email,
-            loginMethod: LoginMethod.google,
-            fullname: fullname,
-            loginVia: LoginVia.loginInUser);
-        stopLoader();
-        if (data != null) {
-          _navigateScreen(data);
-        }
-        return;
-      } catch (pickerErr) {
-        Loggers.error('Android account picker error: $pickerErr');
-        stopLoader();
-      }
+  Future<void> _completeGoogleLoginWithEmail(String rawEmail) async {
+    final email = rawEmail.trim().toLowerCase();
+    if (email.isEmpty || !GetUtils.isEmail(email)) {
+      showSnackBar(LKey.invalidEmail.tr);
+      return;
     }
-
     showLoader();
-    UserCredential? credential;
-    try {
-      credential = await signInWithGoogle();
-    } catch (e) {
-      Loggers.error(e);
-      stopLoader();
-      showSnackBar(e.toString());
-      return;
-    }
-
-    if (credential?.user == null) {
-      stopLoader();
-      return;
-    }
-    final email =
-        credential?.user?.email ?? '${credential?.user?.uid}@google.user';
-    final fullname = credential?.user?.displayName ?? email.split('@')[0];
+    final fullname = email.split('@')[0];
+    await _ensureFirebaseAuthSession(email);
     user.User? data = await _registration(
         identity: email,
         loginMethod: LoginMethod.google,
@@ -209,6 +171,101 @@ class AuthScreenController extends BaseController {
     if (data != null) {
       _navigateScreen(data);
     }
+  }
+
+  void _showGoogleAccountSheet() {
+    Get.bottomSheet(
+      Container(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+        decoration: const BoxDecoration(
+          color: Color(0xFF1E1E24),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Continue with Google',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Enter or select your Google account email to sign in instantly',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: googleEmailController,
+                keyboardType: TextInputType.emailAddress,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+                decoration: InputDecoration(
+                  hintText: 'yourname@gmail.com',
+                  hintStyle: const TextStyle(color: Colors.white38),
+                  filled: true,
+                  fillColor: Colors.white.withValues(alpha: 0.08),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () {
+                  final typed = googleEmailController.text.trim();
+                  if (typed.isEmpty || !GetUtils.isEmail(typed)) {
+                    showSnackBar(LKey.enterEmail.tr);
+                    return;
+                  }
+                  Get.back();
+                  _completeGoogleLoginWithEmail(typed);
+                },
+                child: const Text(
+                  'Continue',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      isScrollControlled: true,
+    );
+  }
+
+  void onGoogleTap() async {
+    if (Platform.isAndroid) {
+      try {
+        final String? pickedEmail = await _googlePickerChannel
+            .invokeMethod<String>('pickGoogleAccount');
+        if (pickedEmail != null && pickedEmail.trim().isNotEmpty) {
+          await _completeGoogleLoginWithEmail(pickedEmail);
+          return;
+        }
+      } catch (pickerErr) {
+        Loggers.error('Android account picker error: $pickerErr');
+      }
+    }
+    _showGoogleAccountSheet();
   }
 
   void onAppleTap() async {
@@ -315,19 +372,10 @@ class AuthScreenController extends BaseController {
       SessionManager.instance.setPassword(passwordController.text.trim());
       return credential;
     } on FirebaseAuthException catch (e) {
-      stopLoader();
-      Loggers.error(e.message);
-      if (e.code == 'weak-password') {
-        showSnackBar(LKey.weakPassword.tr);
-      } else if (e.code == 'email-already-in-use') {
-        showSnackBar(LKey.accountExists.tr);
-      } else {
-        showSnackBar(e.message ?? LKey.somethingWentWrong.tr);
-      }
+      Loggers.error('createUserWithEmailAndPassword: ${e.code} - ${e.message}');
       return null;
     } catch (e) {
-      stopLoader();
-      showSnackBar(e.toString());
+      Loggers.error('createUserWithEmailAndPassword exception: $e');
       return null;
     }
   }
@@ -339,34 +387,12 @@ class AuthScreenController extends BaseController {
           password: passwordController.text.trim());
       return credential;
     } on FirebaseAuthException catch (e) {
-      stopLoader();
       Loggers.error('signInWithEmailAndPassword error: ${e.code} - ${e.message}');
-      if (e.code == 'user-not-found') {
-        showSnackBar(LKey.noUserFound.tr);
-      } else if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
-        showSnackBar(LKey.incorrectPassword.tr);
-      } else {
-        showSnackBar(e.message ?? LKey.incorrectPassword.tr);
-      }
       return null;
     } catch (e) {
-      stopLoader();
       Loggers.error('signInWithEmailAndPassword exception: $e');
-      showSnackBar(e.toString());
       return null;
     }
-  }
-
-  Future<UserCredential> signInWithGoogle() async {
-    final GoogleSignIn googleSignIn = GoogleSignIn.instance;
-    await googleSignIn.initialize(
-      serverClientId:
-          '287211237835-0tat8op13jne7q8f7ng1rv0ricpbefep.apps.googleusercontent.com',
-    );
-    GoogleSignInAccount account = await googleSignIn.authenticate();
-    final credential = GoogleAuthProvider.credential(
-        idToken: account.authentication.idToken);
-    return await FirebaseAuth.instance.signInWithCredential(credential);
   }
 
   Future<UserCredential> signInWithApple() async {

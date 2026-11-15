@@ -1,4 +1,5 @@
-const domainUrl = $("#appUrl").val();
+const rawAppUrl = $("#appUrl").val() || window.location.origin;
+const domainUrl = rawAppUrl.endsWith("/") ? rawAppUrl : `${rawAppUrl}/`;
 const user_type = $("#user_type").val();
 
 $.ajaxSetup({

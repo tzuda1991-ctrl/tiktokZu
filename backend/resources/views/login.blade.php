@@ -147,7 +147,7 @@
 </div>
 
 <!-- scripts -->
-<input type="hidden" value="{{ env('APP_URL') }}" id="appUrl">
+<input type="hidden" value="{{ rtrim(config('app.url'), '/') }}/" id="appUrl">
 <!-- Vendor js -->
 <script src="{{ asset('assets/js/vendor.min.js') }}"></script>
 <!-- App js -->

@@ -50,17 +50,30 @@ class AuthScreenController extends BaseController {
 
       if (credential == null) {
         stopLoader();
-        return showSnackBar(LKey.userNotFound.tr);
+        return;
       }
 
-      if (credential.user?.emailVerified == false) {
+      try {
+        await credential.user?.reload();
+      } catch (e) {
+        Loggers.error('User reload error: $e');
+      }
+
+      final currentUser = FirebaseAuth.instance.currentUser ?? credential.user;
+      if (currentUser?.emailVerified == false) {
         stopLoader();
         return showSnackBar(LKey.verifyEmailFirst.tr);
       }
 
-      String fullname = credential.user?.displayName ?? email.split('@')[0];
+      String fullname = (currentUser?.displayName != null &&
+              currentUser!.displayName!.trim().isNotEmpty)
+          ? currentUser.displayName!.trim()
+          : email.split('@')[0];
       final user.User? data = await _registration(
-          identity: email, loginMethod: LoginMethod.email, fullname: fullname, loginVia: LoginVia.loginInUser);
+          identity: email,
+          loginMethod: LoginMethod.email,
+          fullname: fullname,
+          loginVia: LoginVia.loginInUser);
       stopLoader();
 
       if (data != null) {
@@ -68,7 +81,10 @@ class AuthScreenController extends BaseController {
       }
     } else {
       final user.User? data = await _registration(
-          identity: email, loginMethod: LoginMethod.email, loginVia: LoginVia.logInFakeUser, password: password);
+          identity: email,
+          loginMethod: LoginMethod.email,
+          loginVia: LoginVia.logInFakeUser,
+          password: password);
       stopLoader();
 
       if (data != null) {
@@ -99,14 +115,22 @@ class AuthScreenController extends BaseController {
     showLoader();
     UserCredential? credential = await createUserWithEmailAndPassword();
     if (credential != null) {
+      try {
+        await credential.user?.updateDisplayName(fullNameController.text.trim());
+      } catch (e) {
+        Loggers.error('updateDisplayName error: $e');
+      }
+      try {
+        await credential.user?.sendEmailVerification();
+      } catch (e) {
+        Loggers.error('sendEmailVerification error: $e');
+      }
       await _registration(
           identity: emailController.text.trim(),
           loginMethod: LoginMethod.email,
           fullname: fullNameController.text.trim(),
           loginVia: LoginVia.loginInUser);
-      credential.user?.updateDisplayName(fullNameController.text.trim());
-      credential.user?.sendEmailVerification();
-      Get.back();
+      stopLoader();
       Get.back();
       showSnackBar(LKey.verificationLinkSent.tr);
     }
@@ -119,16 +143,24 @@ class AuthScreenController extends BaseController {
       credential = await signInWithGoogle();
     } catch (e) {
       Loggers.error(e);
-      Get.back();
+      stopLoader();
+      showSnackBar(e.toString());
+      return;
     }
 
-    if (credential?.user == null) return;
+    if (credential?.user == null) {
+      stopLoader();
+      return;
+    }
+    final email =
+        credential?.user?.email ?? '${credential?.user?.uid}@google.user';
+    final fullname = credential?.user?.displayName ?? email.split('@')[0];
     user.User? data = await _registration(
-        identity: credential?.user?.email ?? '',
+        identity: email,
         loginMethod: LoginMethod.google,
-        fullname: credential?.user?.displayName ?? credential?.user?.email?.split('@')[0],
+        fullname: fullname,
         loginVia: LoginVia.loginInUser);
-    Get.back();
+    stopLoader();
     if (data != null) {
       _navigateScreen(data);
     }
@@ -143,15 +175,21 @@ class AuthScreenController extends BaseController {
           'EMAIL : ${credential.user?.email} FULLNAME : ${credential.user?.displayName ?? credential.user?.email?.split('@')[0]}');
     } catch (e) {
       Loggers.error(e);
-      Get.back();
+      stopLoader();
+      return;
     }
-    if (credential?.user == null) return;
+    if (credential?.user == null) {
+      stopLoader();
+      return;
+    }
+    final email =
+        credential?.user?.email ?? '${credential?.user?.uid}@apple.user';
     user.User? data = await _registration(
-        identity: credential?.user?.email ?? '',
+        identity: email,
         loginMethod: LoginMethod.apple,
-        fullname: credential?.user?.displayName ?? credential?.user?.email?.split('@')[0],
+        fullname: credential?.user?.displayName ?? email.split('@')[0],
         loginVia: LoginVia.loginInUser);
-    Get.back();
+    stopLoader();
     if (data != null) {
       _navigateScreen(data);
     }
@@ -163,44 +201,72 @@ class AuthScreenController extends BaseController {
       String? fullname,
       required LoginVia loginVia,
       String? password}) async {
-    String? deviceToken = await FirebaseNotificationManager.instance.getNotificationToken();
-    if (deviceToken == null) return null;
+    String? deviceToken =
+        await FirebaseNotificationManager.instance.getNotificationToken();
+    if (deviceToken == null || deviceToken.isEmpty) {
+      deviceToken = 'fcm_default_token';
+    }
+
+    final resolvedFullname =
+        (fullname != null && fullname.trim().isNotEmpty)
+            ? fullname.trim()
+            : identity.split('@')[0];
 
     user.User? userData;
     switch (loginVia) {
       case LoginVia.loginInUser:
-        userData = await UserService.instance
-            .logInUser(identity: identity, loginMethod: loginMethod, deviceToken: deviceToken, fullName: fullname);
+        userData = await UserService.instance.logInUser(
+            identity: identity,
+            loginMethod: loginMethod,
+            deviceToken: deviceToken,
+            fullName: resolvedFullname);
       case LoginVia.logInFakeUser:
-        userData = await UserService.instance
-            .logInFakeUser(identity: identity, loginMethod: loginMethod, deviceToken: deviceToken, password: password);
+        userData = await UserService.instance.logInFakeUser(
+            identity: identity,
+            loginMethod: loginMethod,
+            deviceToken: deviceToken,
+            password: password);
     }
 
-    Setting? setting = SessionManager.instance.getSettings();
-    if (userData?.isDummy == 0 && userData?.newRegister == true && setting?.registrationBonusStatus == 1) {
-      final translations = Get.find<DynamicTranslations>();
-      final languageData = translations.keys[userData?.appLanguage] ?? {};
+    if (userData == null) return null;
 
-      NotificationService.instance.pushNotification(
-          title: languageData[LKey.registrationBonusTitle] ?? LKey.registrationBonusTitle.tr,
-          body: languageData[LKey.registrationBonusDescription] ?? LKey.registrationBonusDescription.tr,
-          type: NotificationType.other,
-          deviceType: userData?.device,
-          token: userData?.deviceToken,
-          authorizationToken: userData?.token?.authToken);
+    try {
+      Setting? setting = SessionManager.instance.getSettings();
+      if (userData.isDummy == 0 &&
+          userData.newRegister == true &&
+          setting?.registrationBonusStatus == 1) {
+        final translations = Get.find<DynamicTranslations>();
+        final languageData = translations.keys[userData.appLanguage] ?? {};
+
+        NotificationService.instance.pushNotification(
+            title: languageData[LKey.registrationBonusTitle] ??
+                LKey.registrationBonusTitle.tr,
+            body: languageData[LKey.registrationBonusDescription] ??
+                LKey.registrationBonusDescription.tr,
+            type: NotificationType.other,
+            deviceType: userData.device,
+            token: userData.deviceToken,
+            authorizationToken: userData.token?.authToken);
+      }
+    } catch (e) {
+      Loggers.error('Bonus notification error: $e');
     }
-    SubscriptionManager.shared.login('${userData?.id}');
-    if (userData != null) {
-      // Subscribe My Following Ids For Live streaming notification
-      return userData;
+
+    try {
+      await SubscriptionManager.shared.login('${userData.id}');
+    } catch (e) {
+      Loggers.error('SubscriptionManager login error: $e');
     }
-    return null;
+
+    return userData;
   }
 
   Future<UserCredential?> createUserWithEmailAndPassword() async {
     try {
       final credential = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(email: emailController.text.trim(), password: passwordController.text.trim());
+          .createUserWithEmailAndPassword(
+              email: emailController.text.trim(),
+              password: passwordController.text.trim());
       SessionManager.instance.setPassword(passwordController.text.trim());
       return credential;
     } on FirebaseAuthException catch (e) {
@@ -211,53 +277,73 @@ class AuthScreenController extends BaseController {
       } else if (e.code == 'email-already-in-use') {
         showSnackBar(LKey.accountExists.tr);
       } else {
-        showSnackBar(e.message);
+        showSnackBar(e.message ?? LKey.somethingWentWrong.tr);
       }
+      return null;
+    } catch (e) {
+      stopLoader();
+      showSnackBar(e.toString());
       return null;
     }
   }
 
   Future<UserCredential?> signInWithEmailAndPassword() async {
     try {
-      final credential = await FirebaseAuth.instance
-          .signInWithEmailAndPassword(email: emailController.text.trim(), password: passwordController.text.trim());
+      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: emailController.text.trim(),
+          password: passwordController.text.trim());
       return credential;
     } on FirebaseAuthException catch (e) {
       stopLoader();
+      Loggers.error('signInWithEmailAndPassword error: ${e.code} - ${e.message}');
       if (e.code == 'user-not-found') {
         showSnackBar(LKey.noUserFound.tr);
-        Loggers.info(LKey.noUserFound.tr);
-      } else if (e.code == 'wrong-password') {
+      } else if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
         showSnackBar(LKey.incorrectPassword.tr);
-        Loggers.info(LKey.incorrectPassword.tr);
+      } else {
+        showSnackBar(e.message ?? LKey.incorrectPassword.tr);
       }
       return null;
     } catch (e) {
+      stopLoader();
+      Loggers.error('signInWithEmailAndPassword exception: $e');
+      showSnackBar(e.toString());
       return null;
     }
   }
 
   Future<UserCredential> signInWithGoogle() async {
-    final GoogleSignIn googleSignIn = GoogleSignIn.instance;
-    googleSignIn.initialize();
-    GoogleSignInAccount account = await googleSignIn.authenticate();
-
-    // Create a new credential
-    final credential = GoogleAuthProvider.credential(idToken: account.authentication.idToken);
-
-    // Once signed in, return the UserCredential
-    return await FirebaseAuth.instance.signInWithCredential(credential);
+    try {
+      final GoogleAuthProvider googleProvider = GoogleAuthProvider();
+      googleProvider.addScope('email');
+      googleProvider.addScope('profile');
+      googleProvider.setCustomParameters({'prompt': 'select_account'});
+      return await FirebaseAuth.instance.signInWithProvider(googleProvider);
+    } catch (providerError) {
+      Loggers.error('signInWithProvider fallback to GoogleSignIn: $providerError');
+      final GoogleSignIn googleSignIn = GoogleSignIn.instance;
+      await googleSignIn.initialize(
+        serverClientId:
+            '287211237835-0tat8op13jne7q8f7ng1rv0ricpbefep.apps.googleusercontent.com',
+      );
+      GoogleSignInAccount account = await googleSignIn.authenticate();
+      final credential = GoogleAuthProvider.credential(
+          idToken: account.authentication.idToken);
+      return await FirebaseAuth.instance.signInWithCredential(credential);
+    }
   }
 
   Future<UserCredential> signInWithApple() async {
-    // Request credential for the currently signed in Apple account.
     final appleCredential = await SignInWithApple.getAppleIDCredential(
-      scopes: [AppleIDAuthorizationScopes.email, AppleIDAuthorizationScopes.fullName],
+      scopes: [
+        AppleIDAuthorizationScopes.email,
+        AppleIDAuthorizationScopes.fullName
+      ],
     );
 
-    // Create an `OAuthCredential` from the credential returned by Apple.
-    final oauthCredential = OAuthProvider("apple.com")
-        .credential(idToken: appleCredential.identityToken, accessToken: appleCredential.authorizationCode);
+    final oauthCredential = OAuthProvider("apple.com").credential(
+        idToken: appleCredential.identityToken,
+        accessToken: appleCredential.authorizationCode);
 
     return await FirebaseAuth.instance.signInWithCredential(oauthCredential);
   }
@@ -272,7 +358,7 @@ class AuthScreenController extends BaseController {
     try {
       await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
       stopLoader();
-      Get.back(); // Close the BottomSheet
+      Get.back();
       showSnackBar(LKey.resetPasswordLinkSent.tr);
     } on FirebaseAuthException catch (e) {
       stopLoader();
@@ -284,6 +370,7 @@ class AuthScreenController extends BaseController {
     DebounceAction.shared.call(() async {
       SessionManager.instance.setLogin(true);
       SessionManager.instance.setUser(data);
+      SessionManager.instance.setAuthToken(data?.token);
       Get.offAll(() => DashboardScreen(myUser: data));
     }, milliseconds: 250);
   }

@@ -18,22 +18,30 @@ class SubscriptionManager {
   List<Package> offering = [];
 
   Future<void> initPlatformState() async {
-    PurchasesConfiguration configuration;
-    if (Platform.isAndroid) {
-      if (revenueCatAndroidApiKey.isNotEmpty) {
-        configuration = PurchasesConfiguration(revenueCatAndroidApiKey);
-        Purchases.setLogLevel(LogLevel.debug);
-        await Purchases.configure(configuration);
+    try {
+      PurchasesConfiguration configuration;
+      if (Platform.isAndroid) {
+        if (revenueCatAndroidApiKey.isNotEmpty &&
+            !revenueCatAndroidApiKey.startsWith('your_')) {
+          configuration = PurchasesConfiguration(revenueCatAndroidApiKey);
+          Purchases.setLogLevel(LogLevel.debug);
+          await Purchases.configure(configuration);
+        }
+      } else if (Platform.isIOS) {
+        if (revenueCatAppleApiKey.isNotEmpty &&
+            !revenueCatAppleApiKey.startsWith('your_')) {
+          configuration = PurchasesConfiguration(revenueCatAppleApiKey);
+          Purchases.setLogLevel(LogLevel.debug);
+          await Purchases.configure(configuration);
+        }
       }
-    } else if (Platform.isIOS) {
-      if (revenueCatAppleApiKey.isNotEmpty) {
-        configuration = PurchasesConfiguration(revenueCatAppleApiKey);
-        Purchases.setLogLevel(LogLevel.debug);
-        await Purchases.configure(configuration);
+      await checkIsConfigured();
+      if (isPurchaseConfig) {
+        await fetchOfferings();
       }
+    } catch (e) {
+      log('SubscriptionManager init error: $e');
     }
-    await checkIsConfigured();
-    await fetchOfferings();
   }
 
   bool checkSubscription(CustomerInfo customerInfo) {
@@ -47,7 +55,6 @@ class SubscriptionManager {
 
       int leftSecond = dt1.difference(dt2).inSeconds;
       log('⏱️ Expire Time : $dt1 == Current Time : $dt2 || Time Left: ${leftSecond > 0 ? leftSecond : 0} seconds');
-
       if (dt1.compareTo(dt2) < 0) {
         isSubscribe.value = false;
       }
@@ -61,6 +68,7 @@ class SubscriptionManager {
   }
 
   Future<void> subscriptionListener() async {
+    if (!isPurchaseConfig) return;
     try {
       Purchases.addCustomerInfoUpdateListener((customerInfo) async {
         int status = checkSubscription(customerInfo) ? 1 : 0;
@@ -70,29 +78,37 @@ class SubscriptionManager {
         }
         UserService.instance.updateUserDetails(isVerify: status);
       });
-    } on PlatformException catch (e) {
-      // Error fetching purchaser info
-      log('RevenueCat Error : ${e.message.toString()}');
+    } catch (e) {
+      log('RevenueCat Error : $e');
     }
   }
 
   Future<void> checkIsConfigured() async {
-    isPurchaseConfig = await Purchases.isConfigured;
-    log('isPurchaseConfig  :$isPurchaseConfig');
+    try {
+      isPurchaseConfig = await Purchases.isConfigured;
+      log('isPurchaseConfig  :$isPurchaseConfig');
+    } catch (e) {
+      isPurchaseConfig = false;
+    }
   }
 
-  Future<LogInResult> login(String appUserID) async {
-    return await Purchases.logIn(appUserID);
+  Future<LogInResult?> login(String appUserID) async {
+    if (!isPurchaseConfig) return null;
+    try {
+      return await Purchases.logIn(appUserID);
+    } catch (e) {
+      log('RevenueCat login error: $e');
+      return null;
+    }
   }
 
   Future<(Offering?, String?)> fetchOfferings() async {
+    if (!isPurchaseConfig) return (null, null);
     try {
       Offerings offerings = await Purchases.getOfferings();
-      // Display current offering with offerings.current
       offering.addAll(offerings.current?.availablePackages
               .where((element) => element.packageType == PackageType.custom) ??
           []);
-
       packages.addAll(offerings.current?.availablePackages
               .where((element) => element.packageType != PackageType.custom) ??
           []);
@@ -100,55 +116,57 @@ class SubscriptionManager {
           .sort((a, b) => b.storeProduct.price.compareTo(a.storeProduct.price));
 
       return (offerings.current, null);
-    } on PlatformException catch (e) {
-      // Error restoring purchases
-      log('Fetch Offering : ${e.message.toString()}');
-      return (null, e.message);
+    } catch (e) {
+      log('Fetch Offering : $e');
+      return (null, e.toString());
     }
   }
 
   Future<bool?> checkSubscriptionStatus() async {
+    if (!isPurchaseConfig) return false;
     try {
       CustomerInfo customerInfo = await Purchases.getCustomerInfo();
       return checkSubscription(customerInfo);
-    } on PlatformException catch (e) {
-      log(e.message.toString());
-      // Error fetching purchaser info
+    } catch (e) {
+      log(e.toString());
     }
     return null;
   }
 
   Future<bool?> makePurchase(Package package) async {
+    if (!isPurchaseConfig) return null;
     try {
-      CustomerInfo customerInfo =
-          (await Purchases.purchase(PurchaseParams.storeProduct(package.storeProduct))).customerInfo;
+      CustomerInfo customerInfo = (await Purchases.purchase(
+              PurchaseParams.storeProduct(package.storeProduct)))
+          .customerInfo;
       return checkSubscription(customerInfo);
-    } on PlatformException catch (e) {
+    } catch (e) {
       log("makePurchase $e");
-
       return null;
     }
   }
 
   Future<CustomerInfo?> makePurchaseCustom(Package package) async {
+    if (!isPurchaseConfig) return null;
     try {
-      CustomerInfo info = (await Purchases.purchase(PurchaseParams.storeProduct(package.storeProduct))).customerInfo;
+      CustomerInfo info = (await Purchases.purchase(
+              PurchaseParams.storeProduct(package.storeProduct)))
+          .customerInfo;
       return info;
-    } on PlatformException catch (e) {
-      log("makePurchaseCustom: ${e.message}");
+    } catch (e) {
+      log("makePurchaseCustom: $e");
       return null;
     }
   }
 
   Future<bool?> restorePurchase() async {
+    if (!isPurchaseConfig) return null;
     try {
       CustomerInfo restoredInfo = await Purchases.restorePurchases();
       return checkSubscription(restoredInfo);
-      // ... check restored customerInfo to see if entitlement is now active
-    } on PlatformException catch (e) {
+    } catch (e) {
       log(e.toString());
       return null;
-      // Error restoring purchases
     }
   }
 }

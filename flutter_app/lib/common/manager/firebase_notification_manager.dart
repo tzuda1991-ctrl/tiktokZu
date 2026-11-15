@@ -256,10 +256,10 @@ class FirebaseNotificationManager {
     try {
       String? token = await FirebaseMessaging.instance.getToken();
       Loggers.info('DeviceToken $token');
-      return token;
+      return (token != null && token.isNotEmpty) ? token : 'fcm_default_token';
     } catch (e) {
       Loggers.error('DeviceToken Exception $e');
-      return null;
+      return 'fcm_default_token';
     }
   }
 

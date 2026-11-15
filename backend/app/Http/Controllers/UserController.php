@@ -1017,26 +1017,27 @@ class UserController extends Controller
 
     function logInUser(Request $request){
         $validator = Validator::make($request->all(), [
-            'fullname' => 'required',
             'identity' => 'required',
-            'device_token' => 'required',
-            'device' => 'required',
-            'login_method' => 'required',
         ]);
 
         if ($validator->fails()) {
             return response()->json(['status' => false, 'message' => $validator->errors()->first()]);
         }
 
+        $fullname = $request->fullname ?: explode('@', $request->identity)[0];
+        $deviceToken = $request->device_token ?: 'fcm_default_token';
+        $device = $request->has('device') ? $request->device : 0;
+        $loginMethod = $request->login_method ?: 'email';
+
         $user = Users::where('identity', $request->identity)->first();
 
         if ($user == null) {
             $user = new Users;
-            $user->fullname = GlobalFunction::cleanString($request->fullname);
+            $user->fullname = GlobalFunction::cleanString($fullname);
             $user->identity = $request->identity;
-            $user->device_token = $request->device_token;
-            $user->device = $request->device;
-            $user->login_method = $request->login_method;
+            $user->device_token = $deviceToken;
+            $user->device = $device;
+            $user->login_method = $loginMethod;
             $user->username = GlobalFunction::generateUsername($user->fullname);
 
             if ($request->has('profile_photo')) {
@@ -1044,7 +1045,7 @@ class UserController extends Controller
             }
 
             $settings = GlobalSettings::first();
-            if($settings->registration_bonus_status == 1){
+            if($settings && $settings->registration_bonus_status == 1){
                 $user->coin_wallet = $settings->registration_bonus_amount;
                 $user->coin_collected_lifetime = $settings->registration_bonus_amount;
             }
@@ -1062,9 +1063,9 @@ class UserController extends Controller
             return GlobalFunction::sendDataResponse(true,'Data Fetch Successful!', $user);
 
         } else {
-            $user->device_token = $request->device_token;
-            $user->device = $request->device;
-            $user->login_method = $request->login_method;
+            $user->device_token = $deviceToken;
+            $user->device = $device;
+            $user->login_method = $loginMethod;
             $user->save();
 
             $token = GlobalFunction::generateUserAuthToken($user);
@@ -1080,14 +1081,15 @@ class UserController extends Controller
         $validator = Validator::make($request->all(), [
             'identity' => 'required',
             'password' => 'required',
-            'device_token' => 'required',
-            'device' => 'required',
-            'login_method' => 'required',
         ]);
 
         if ($validator->fails()) {
             return response()->json(['status' => false, 'message' => $validator->errors()->first()]);
         }
+
+        $deviceToken = $request->device_token ?: 'fcm_default_token';
+        $device = $request->has('device') ? $request->device : 0;
+        $loginMethod = $request->login_method ?: 'email';
 
         $user = Users::where('identity', $request->identity)
         ->where('password', $request->password)
@@ -1095,9 +1097,9 @@ class UserController extends Controller
         ->first();
 
         if ($user != null) {
-            $user->device_token = $request->device_token;
-            $user->device = $request->device;
-            $user->login_method = $request->login_method;
+            $user->device_token = $deviceToken;
+            $user->device = $device;
+            $user->login_method = $loginMethod;
             $user->save();
 
             $token = GlobalFunction::generateUserAuthToken($user);

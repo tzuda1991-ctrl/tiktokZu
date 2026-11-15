@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -e
 
+export LOG_CHANNEL="${LOG_CHANNEL:-stderr}"
+
+if [ -z "${APP_KEY:-}" ]; then
+  echo "[Shortzz] ERROR: APP_KEY is missing in Railway Variables!" >&2
+fi
+if [ -z "${DB_HOST:-}" ] && [ -z "${DATABASE_URL:-}" ]; then
+  echo "[Shortzz] ERROR: DB_HOST / DATABASE_URL is missing in Railway Variables!" >&2
+fi
+
 PORT="${PORT:-8080}"
 sed -i "s/Listen 80/Listen ${PORT}/g" /etc/apache2/ports.conf
 sed -i "s/<VirtualHost \*:80>/<VirtualHost *:${PORT}>/g" /etc/apache2/sites-available/000-default.conf

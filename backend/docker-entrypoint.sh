@@ -6,7 +6,7 @@ export LOG_CHANNEL="${LOG_CHANNEL:-stderr}"
 if [ -z "${APP_KEY:-}" ]; then
   echo "[Shortzz] ERROR: APP_KEY is missing in Railway Variables!" >&2
 fi
-if [ -z "${DB_HOST:-}" ] && [ -z "${DATABASE_URL:-}" ]; then
+if [ -z "${DB_HOST:-}" ] && [ -z "${DATABASE_URL:-}" ] && [ -z "${MYSQL_URL:-}" ]; then
   echo "[Shortzz] ERROR: DB_HOST / DATABASE_URL is missing in Railway Variables!" >&2
 fi
 
@@ -26,6 +26,63 @@ mkdir -p /var/www/html/storage/app/public \
   /var/www/html/bootstrap/cache
 
 chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+
+# Auto-import shortzz_database.sql once if MySQL is connected and tbl_settings does not exist yet
+if [ -f /var/www/html/database/shortzz_database.sql ]; then
+  php -r '
+    $url = getenv("DATABASE_URL") ?: getenv("MYSQL_URL");
+    if ($url) {
+        $p = parse_url($url);
+        $host = $p["host"] ?? "";
+        $port = $p["port"] ?? 3306;
+        $db   = ltrim($p["path"] ?? "", "/");
+        $user = $p["user"] ?? "";
+        $pass = $p["pass"] ?? "";
+    } else {
+        $host = getenv("DB_HOST") ?: getenv("MYSQLHOST");
+        $port = getenv("DB_PORT") ?: (getenv("MYSQLPORT") ?: 3306);
+        $db   = getenv("DB_DATABASE") ?: getenv("MYSQLDATABASE");
+        $user = getenv("DB_USERNAME") ?: getenv("MYSQLUSER");
+        $pass = getenv("DB_PASSWORD") ?: getenv("MYSQLPASSWORD");
+    }
+    if (!$host || !$db || !$user) {
+        fwrite(STDERR, "[Shortzz] Skipping auto SQL import: DB credentials incomplete.\n");
+        exit(0);
+    }
+    for ($i = 0; $i < 10; $i++) {
+        try {
+            $pdo = new PDO("mysql:host={$host};port={$port};dbname={$db};charset=utf8mb4", $user, $pass, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_TIMEOUT => 5,
+            ]);
+            $exists = $pdo->query("SHOW TABLES LIKE \"tbl_settings\"")->fetchColumn();
+            if ($exists) {
+                fwrite(STDOUT, "[Shortzz] Database tables already present.\n");
+                exit(0);
+            }
+            fwrite(STDOUT, "[Shortzz] Empty database detected. Importing database/shortzz_database.sql...\n");
+            $cmd = sprintf(
+                "MYSQL_PWD=%s mysql --skip-ssl -h %s -P %s -u %s %s < /var/www/html/database/shortzz_database.sql",
+                escapeshellarg($pass),
+                escapeshellarg($host),
+                escapeshellarg((string)$port),
+                escapeshellarg($user),
+                escapeshellarg($db)
+            );
+            passthru($cmd, $ret);
+            if ($ret !== 0) {
+                fwrite(STDERR, "[Shortzz] Auto SQL import failed with exit code {$ret}.\n");
+            } else {
+                fwrite(STDOUT, "[Shortzz] Database schema imported successfully!\n");
+            }
+            exit(0);
+        } catch (Throwable $e) {
+            fwrite(STDERR, "[Shortzz] Waiting for MySQL ({$host}:{$port}): " . $e->getMessage() . "\n");
+            sleep(2);
+        }
+    }
+  ' || true
+fi
 
 php artisan storage:link || true
 php artisan config:clear || true
